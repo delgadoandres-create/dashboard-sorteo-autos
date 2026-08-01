@@ -23,59 +23,64 @@ st.title("🎟️ Sistema de Gestión y Sorteos por Lote")
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# CONSULTA DE DATOS Y FILTRO DE LOTES
+# CONSULTA DE DATOS
 # -----------------------------------------------------------------------------
 try:
-    # Solo traemos los boletos que estén pagados (PAID)
-    res_tickets = supabase.table("tickets").select("*").eq("status", "PAID").execute()
+    # Traer todos los boletos válidos o pagados
+    res_tickets = supabase.table("tickets").select("*").execute()
     all_tickets = res_tickets.data if res_tickets.data else []
 except Exception as e:
-    st.error(f"Error consultando la base de datos: {e}")
+    st.error(f"Error consultando los boletos: {e}")
     all_tickets = []
 
-# Obtener los IDs de lotes (draw_id) presentes en los boletos pagados
-lotes_disponibles = sorted(list(set([t['draw_id'] for t in all_tickets if 'draw_id' in t and t['draw_id'] is not None])))
+# Filtrar boletos pagados
+boletos_pagados = [t for t in all_tickets if t.get('status') in ['PAID', 'WINNER']]
 
-# METRICAS PRINCIPALES
-col1, col2 = st.columns(2)
-col1.metric("🎟️ Boletos Pagados Totales", f"{len(all_tickets):,}")
-col2.metric("🎯 Lotes con Boletos Pagados", f"{len(lotes_disponibles)}")
+# Obtener IDs de lotes con boletos participantes
+lotes_disponibles = sorted(list(set([t['draw_id'] for t in boletos_pagados if 'draw_id' in t and t['draw_id'] is not None])))
+
+# METRICAS
+col1, col2, col3 = st.columns(3)
+col1.metric("🎟️ Boletos Pagados Totales", f"{len(boletos_pagados):,}")
+col2.metric("🎯 Lotes Registrados", f"{len(lotes_disponibles)}")
+
+ganadores_actuales = [t for t in all_tickets if t.get('status') == 'WINNER']
+col3.metric("🏆 Boletos Ganadores Registrados", f"{len(ganadores_actuales)}")
 
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
 # PESTAÑAS OPERATIVAS
 # -----------------------------------------------------------------------------
-tab1, tab2 = st.tabs(["📋 Boletos Registrados (PAID)", "🎲 Executar Sorteo de Lote"])
+tab1, tab2 = st.tabs(["📋 Registros de Boletos", "🎲 Ejecutar y Registrar Sorteo"])
 
 with tab1:
-    st.subheader("Boletos Validados (Pago Confirmado)")
+    st.subheader("Boletos Registrados en el Sistema")
     if st.button("🔄 Actualizar Tabla"):
         st.rerun()
         
     if all_tickets:
         st.dataframe(all_tickets, use_container_width=True)
     else:
-        st.info("No hay boletos pagados en la base de datos.")
+        st.info("No hay boletos en la base de datos.")
 
 with tab2:
-    st.subheader("🎲 Sorteo Oficial por Lote (Draw)")
+    st.subheader("🎲 Sorteo Oficial por Lote / Draw")
     
     if not lotes_disponibles:
-        st.warning("No hay lotes con boletos pagados para sortear.")
+        st.warning("No hay lotes con boletos válidos para sortear.")
     else:
-        # Selector de lote
         lote_seleccionado = st.selectbox("Seleccionar el Lote / Draw_ID a sortear:", lotes_disponibles)
         
-        # Filtrar boletos pertenecientes al lote seleccionado
-        boletos_lote = [t for t in all_tickets if t.get('draw_id') == lote_seleccionado]
+        # Filtrar boletos de este lote que hayan sido pagados
+        boletos_lote = [t for t in boletos_pagados if t.get('draw_id') == lote_seleccionado]
         
-        st.info(f"📊 Boletos participantes en el **Lote #{lote_seleccionado}**: **{len(boletos_lote)}**")
+        st.info(f"📊 Boletos elegibles en el **Lote #{lote_seleccionado}**: **{len(boletos_lote)}**")
         
         if len(boletos_lote) == 0:
             st.warning("Este lote no tiene boletos válidos para sortear.")
         else:
-            if st.button("🚀 EJECUTAR SORTEO DE LOTE", type="primary"):
+            if st.button("🚀 EJECUTAR SORTEO Y GUARDAR GANADOR", type="primary"):
                 placeholder = st.empty()
                 
                 # Animación de sorteo
@@ -89,14 +94,40 @@ with tab2:
                 ganador = random.choice(boletos_lote)
                 placeholder.empty()
                 
-                st.balloons()
-                st.success(f"🎉 ¡TENEMOS UN BOLETO GANADOR PARA EL LOTE #{lote_seleccionado}!")
+                # -------------------------------------------------------------
+                # REGISTRO DEL GANADOR EN SUPABASE
+                # -------------------------------------------------------------
+                ticket_id = ganador.get('id')
+                num_ticket = ganador.get('ticket_number')
                 
-                # Mostrar resultado destacado
-                st.markdown(f"### 🏆 Boleto Ganador: `{ganador.get('ticket_number')}`")
-                st.markdown(f"📱 **WhatsApp:** `{ganador.get('whatsapp')}`")
-                st.markdown(f"🆔 **ID de Boleto:** `{ganador.get('id')}`")
+                # 1. Intentar actualizar el boleto como 'WINNER'
+                try:
+                    supabase.table("tickets").update({"status": "WINNER"}).eq("id", ticket_id).execute()
+                    st.success(f"✅ Boleto #{num_ticket} (ID: {ticket_id}) actualizado correctamente como WINNER.")
+                except Exception as e:
+                    st.warning(f"No se pudo cambiar el status del boleto a 'WINNER' ({e}). Se mantiene el registro sin alterar status.")
+
+                # 2. Intentar actualizar la tabla de lotes 'draws' con el ticket ganador
+                try:
+                    supabase.table("draws").update({
+                        "winning_ticket_id": ticket_id,
+                        "status": "COMPLETED"
+                    }).eq("id", lote_seleccionado).execute()
+                    st.success(f"✅ Lote #{lote_seleccionado} actualizado en la tabla 'draws' con el ganador #{num_ticket}.")
+                except Exception as e:
+                    # En caso de que la tabla 'draws' no exista o varíe el nombre de la columna
+                    st.info(f"Nota sobre la tabla de lotes: {e}")
+
+                # -------------------------------------------------------------
+                # PRESENTACIÓN DE RESULTADOS
+                # -------------------------------------------------------------
+                st.balloons()
+                st.markdown(f"# 🎉 ¡GANADOR PROCLAMADO EN EL LOTE #{lote_seleccionado}!")
+                
+                col_g1, col_g2 = st.columns(2)
+                col_g1.metric("🎟️ Número de Boleto Ganador", f"{num_ticket}")
+                col_g2.metric("📱 WhatsApp del Ganador", f"{ganador.get('whatsapp')}")
                 
                 st.markdown("---")
-                st.subheader("Detalles del Registro Ganador:")
+                st.subheader("Registro Completo del Ganador:")
                 st.json(ganador)
