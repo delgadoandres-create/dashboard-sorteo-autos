@@ -4,85 +4,78 @@ import random
 import time
 
 # Configuración de página
-st.set_page_config(page_title="Dashboard Sorteo CarShow", page_icon="🚘", layout="wide")
+st.set_page_config(page_title="Panel de Control - Sorteo", page_icon="🎟️", layout="wide")
 
-# Inicializar conexión Supabase usando Secrets
+# Conexión a Supabase mediante Secrets
 @st.cache_resource
 def init_supabase():
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-supabase = init_supabase()
+try:
+    supabase = init_supabase()
+except Exception as e:
+    st.error("⚠️ Error conectando a Supabase. Verifica los Secrets.")
+    st.stop()
 
-st.title("🚘 Gran Sorteo CarShow 2026 - Panel de Control")
+st.title("🎟️ Panel de Control - Sistema de Sorteos")
 st.markdown("---")
 
-# METRICAS GENERALES
-col1, col2, col3 = st.columns(3)
+# METRICAS
+col1, col2 = st.columns(2)
 
 try:
-    # Obtener total de boletos vendidos
-    res_tickets = supabase.table("tickets").select("id", count="exact").execute()
-    total_tickets = res_tickets.count if res_tickets.count is not None else 0
+    # Traer todos los boletos
+    res_tickets = supabase.table("tickets").select("*").execute()
+    data_tickets = res_tickets.data if res_tickets.data else []
     
-    # Obtener recaudación total
-    res_purchases = supabase.table("purchases").select("amount").execute()
-    total_recaudado = sum([p['amount'] for p in res_purchases.data]) if res_purchases.data else 0
-
-    col1.metric("🎟️ Boletos Vendidos", f"{total_tickets:,}")
-    col2.metric("💰 Recaudación Total", f"Gs. {total_recaudado:,.0f}")
-    col3.metric("🎯 Sorteo Activo", "Sorteo #1")
+    total_tickets = len(data_tickets)
+    col1.metric("🎟️ Total Boletos Registrados", f"{total_tickets:,}")
+    col2.metric("🟢 Estado del Sistema", "Conectado y Listo")
 
 except Exception as e:
-    st.error(f"Error al conectar con la base de datos: {e}")
+    st.error(f"Error consultando la base de datos: {e}")
+    data_tickets = []
 
 st.markdown("---")
 
-# PESTAÑAS DEL DASHBOARD
-tab1, tab2 = st.tabs(["🎟️ Lista de Boletos", "🎉 Ejecutar Sorteo"])
+# PESTAÑAS OPERATIVAS
+tab1, tab2 = st.tabs(["📋 Lista de Boletos", "🎲 Bolillero Digital"])
 
 with tab1:
-    st.subheader("Boletos Asignados")
+    st.subheader("Boletos Registrados")
     if st.button("🔄 Actualizar Tabla"):
         st.rerun()
         
-    try:
-        data = supabase.table("tickets").select("ticket_number, customer_phone, created_at").order("created_at", desc=True).execute()
-        if data.data:
-            st.dataframe(data.data, use_container_width=True)
-        else:
-            st.info("Aún no hay boletos registrados.")
-    except Exception as e:
-        st.error(f"Error cargando boletos: {e}")
+    if data_tickets:
+        st.dataframe(data_tickets, use_container_width=True)
+    else:
+        st.info("No hay registros en la tabla de boletos.")
 
 with tab2:
-    st.subheader("🎲 Extracción del Boleto Ganador")
-    st.write("Presioná el botón para realizar la selección aleatoria de forma transparente sobre la base de datos.")
+    st.subheader("🎲 Selección Aleatoria del Ganador")
+    st.write("El sistema seleccionará de forma aleatoria e irrefutable un boleto directamente desde la base de datos.")
     
-    if st.button("🚀 REALIZAR SORTEO AHORA", type="primary"):
-        try:
-            todos_boletos = supabase.table("tickets").select("ticket_number, customer_phone").execute().data
+    if st.button("🚀 EJECUTAR SORTEO", type="primary"):
+        if not data_tickets:
+            st.warning("No hay boletos en la base de datos para realizar el sorteo.")
+        else:
+            placeholder = st.empty()
             
-            if not todos_boletos:
-                st.warning("No hay boletos en la base de datos para sortear.")
-            else:
-                placeholder = st.empty()
-                
-                # Efecto de ruleta aleatoria
-                with st.spinner("Girando bolillero digital..."):
-                    for _ in range(25):
-                        temp = random.choice(todos_boletos)
-                        placeholder.header(f"🎰 NÚMERO: **{temp['ticket_number']}**")
-                        time.sleep(0.1)
-                
-                # Ganador definitivo
-                ganador = random.choice(todos_boletos)
-                placeholder.empty()
-                
-                st.balloons()
-                st.success(f"🎉 ¡BOLETO GANADOR DEFINITIVO: **{ganador['ticket_number']}**!")
-                st.info(f"📱 **Teléfono del Ganador:** {ganador['customer_phone']}")
-                
-        except Exception as e:
-            st.error(f"Error ejecutando el sorteo: {e}")
+            # Animación de sorteo
+            with st.spinner("Girando bolillero digital..."):
+                for _ in range(25):
+                    temp = random.choice(data_tickets)
+                    # Muestra un valor representativo del registro
+                    valor_mostrar = temp.get('ticket_number') or temp.get('number') or temp.get('id')
+                    placeholder.header(f"🎰 NÚMERO / ID: **{valor_mostrar}**")
+                    time.sleep(0.1)
+            
+            # Elección del ganador definitivo
+            ganador = random.choice(data_tickets)
+            placeholder.empty()
+            
+            st.balloons()
+            st.success("🎉 ¡TENEMOS UN GANADOR!")
+            st.json(ganador) # Muestra los datos completos del registro ganador
